@@ -1,0 +1,346 @@
+/**
+ * Admin CSS for the plugin
+ */
+
+/* Dark mode styles */
+
+
+/* Toggle Switch */
+input[type="checkbox"]:checked + label {
+    background-color: #1173d4;
+}
+
+input[type="checkbox"]:checked + label + .dot {
+    transform: translateX(1rem);
+    background-color: #fff;
+}
+
+.dark {
+    color-scheme: dark;
+}
+
+/* Custom slider styles */
+.slider-thumb::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1rem;
+    height: 1rem;
+    background-color: #1173d4;
+    border-radius: 9999px;
+    cursor: pointer;
+}
+
+.slider-thumb::-moz-range-thumb {
+    width: 1rem;
+    height: 1rem;
+    background-color: #1173d4;
+    border-radius: 9999px;
+    cursor: pointer;
+}
+
+/* Enhanced slider styles for compression level */
+.slider-thumb-enhanced::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1.5rem;
+    height: 1.5rem;
+    background: linear-gradient(135deg, #1173d4, #0f6bb8);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 3px solid #ffffff;
+    box-shadow: 0 2px 8px rgba(17, 115, 212, 0.3);
+    transition: all 0.2s ease;
+}
+
+/* Smooth transitions for Alpine.js elements */
+[x-show] {
+    transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+}
+
+[x-show="false"] {
+    opacity: 0;
+    transform: scale(0.9);
+}
+
+[x-show="true"] {
+    opacity: 1;
+    transform: scale(1);
+}
+
+.slider-thumb-enhanced::-webkit-slider-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(17, 115, 212, 0.4);
+}
+
+.slider-thumb-enhanced::-webkit-slider-thumb:active {
+    transform: scale(0.95);
+}
+
+.slider-thumb-enhanced::-moz-range-thumb {
+    width: 1.5rem;
+    height: 1.5rem;
+    background: linear-gradient(135deg, #1173d4, #0f6bb8);
+    border-radius: 50%;
+    cursor: pointer;
+    border: 3px solid #ffffff;
+    box-shadow: 0 2px 8px rgba(17, 115, 212, 0.3);
+    transition: all 0.2s ease;
+}
+
+.slider-thumb-enhanced::-moz-range-thumb:hover {
+    transform: scale(1.1);
+    box-shadow: 0 4px 12px rgba(17, 115, 212, 0.4);
+}
+
+.slider-thumb-enhanced::-moz-range-thumb:active {
+    transform: scale(0.95);
+}
+
+/* Dark mode slider styles */
+.dark .slider-thumb-enhanced::-webkit-slider-thumb {
+    border-color: #1f2937;
+    box-shadow: 0 2px 8px rgba(17, 115, 212, 0.5);
+}
+
+.dark .slider-thumb-enhanced::-moz-range-thumb {
+    border-color: #1f2937;
+    box-shadow: 0 2px 8px rgba(17, 115, 212, 0.5);
+}
+
+/* Slider track styling */
+.slider-thumb-enhanced::-webkit-slider-track {
+    background: transparent;
+    height: 0.75rem;
+    border-radius: 0.5rem;
+}
+
+.slider-thumb-enhanced::-moz-range-track {
+    background: transparent;
+    height: 0.75rem;
+    border-radius: 0.5rem;
+    border: none;
+}
+
+/* Material icons */
+.material-symbols-outlined {
+    font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24
+}
+
+/* Error color */
+.error {
+    --tw-bg-opacity: 1;
+    background-color: rgb(239 68 68 / var(--tw-bg-opacity));
+}
+
+.bg-error\/20 {
+    background-color: rgb(239 68 68 / 0.2);
+}
+
+.text-error {
+    --tw-text-opacity: 1;
+    color: rgb(239 68 68 / var(--tw-text-opacity));
+}
+
+/* Form styles */
+.form-input, .form-select {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.form-input:focus, .form-select:focus {
+    outline: none;
+    border-color: #1173d4;
+    box-shadow: 0 0 0 3px rgba(17, 115, 212, 0.1);
+}
+
+.dark .form-input, .dark .form-select {
+    background-color: #1f2937;
+    border-color: #4b5563;
+    color: #f9fafb;
+}
+
+.dark .form-input:focus, .dark .form-select:focus {
+    border-color: #1173d4;
+    box-shadow: 0 0 0 3px rgba(17, 115, 212, 0.3);
+}
+
+.webp-cp-full-view:hover {
+    background-color: rgba(17, 115, 212, 0.9) !important;
+}
+
+input#deletion-date, 
+select#deletion-duration {
+    padding-top: 6px;
+    padding-right: 0.75rem;
+    padding-bottom: 5px;
+    padding-left: 0.75rem;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.5em 1.5em;
+    print-color-adjust: exact;
+    border-radius: 0.5rem;
+    border-color: rgb(209 213 219 / var(--tw-border-opacity, 1));
+}
+
+input#custom-duration {
+    padding-top: 6px;
+    padding-right: 0.75rem;
+    padding-bottom: 5px;
+    padding-left: 0.75rem;
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+    background-position: right 0.5rem center;
+    background-repeat: no-repeat;
+    background-size: 1.5em 1.5em;
+    print-color-adjust: exact;
+    border-radius: 0.5rem;
+    border-color: rgb(209 213 219 / var(--tw-border-opacity, 1));
+}
+
+select#deletion-duration {
+    padding-right: 2.5rem;
+}
+
+/* Progress Bar Enhancements */
+#webp-cp-progress-modal .animate-pulse {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+#webp-cp-progress-modal .animate-spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: .5;
+    }
+}
+
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Progress bar shimmer effect */
+#webp-cp-progress-bar::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+    animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        left: -100%;
+    }
+    100% {
+        left: 100%;
+    }
+}
+
+/* Enhanced hover effects for progress modal */
+#webp-cp-progress-close:hover {
+    transform: scale(1.05);
+}
+
+/* Stats card hover effects */
+#webp-cp-progress-modal .grid > div {
+    transition: all 0.2s ease-in-out;
+}
+
+#webp-cp-progress-modal .grid > div:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Dark mode enhancements */
+.dark #webp-cp-progress-modal .grid > div:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Mobile responsiveness for progress modal */
+@media (max-width: 640px) {
+    #webp-cp-progress-modal .grid {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+    }
+    
+    #webp-cp-progress-modal .grid > div {
+        padding: 0.75rem;
+    }
+    
+    #webp-cp-progress-modal .grid > div .w-8 {
+        width: 1.5rem;
+        height: 1.5rem;
+    }
+    
+    #webp-cp-progress-modal .grid > div .text-lg {
+        font-size: 1rem;
+    }
+}
+
+/* Mobile responsiveness for compression level display */
+@media (max-width: 640px) {
+    /* Adjust current value display for mobile */
+    .slider-thumb-enhanced + div .absolute.-top-12 {
+        top: -2.5rem;
+    }
+    
+    .slider-thumb-enhanced + div .absolute.-top-12 div {
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    
+    /* Adjust slider height for better touch interaction */
+    .slider-thumb-enhanced {
+        height: 1rem;
+    }
+    
+    .slider-thumb-enhanced::-webkit-slider-thumb {
+        width: 1.75rem;
+        height: 1.75rem;
+    }
+    
+    .slider-thumb-enhanced::-moz-range-thumb {
+        width: 1.75rem;
+        height: 1.75rem;
+    }
+    
+    /* Adjust labels for mobile */
+    .slider-thumb-enhanced + div + div {
+        font-size: 0.625rem;
+        margin-top: 0.5rem;
+    }
+    
+    .slider-thumb-enhanced + div + div > div {
+        text-align: center;
+    }
+}
+
+/* Tablet responsiveness */
+@media (max-width: 768px) and (min-width: 641px) {
+    .slider-thumb-enhanced + div .absolute.-top-12 div {
+        padding: 0.375rem 0.75rem;
+    }
+}

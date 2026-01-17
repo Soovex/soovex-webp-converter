@@ -1,0 +1,93 @@
+/**
+ * Media Library CSS for WebP Converter Pro
+ */
+
+/* WebP Status Column */
+.webp-status-converted {
+    color: #00a32a;
+    font-weight: 500;
+}
+
+.webp-status-converted-no-backup {
+    color: #f0b849;
+    font-weight: 500;
+}
+
+.webp-status-available {
+    color: #f0b849;
+    font-weight: 500;
+}
+
+.webp-status-not-converted {
+    color: #d63638;
+    font-weight: 500;
+}
+
+.webp-status-not-applicable {
+    color: #8c8f94;
+}
+
+/* Row Actions */
+.webp-cp-convert-media,
+.webp-cp-revert-media {
+    color: #0073aa;
+    text-decoration: none;
+}
+
+.webp-cp-convert-media:hover,
+.webp-cp-revert-media:hover {
+    color: #005177;
+    text-decoration: underline;
+}
+
+.webp-cp-processing {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Messages */
+.webp-cp-message {
+    position: fixed;
+    top: 32px;
+    right: 20px;
+    z-index: 9999;
+    max-width: 400px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.webp-cp-message p {
+    margin: 0;
+    padding: 8px 12px;
+}
+
+/* Status Icons */
+.webp-status-converted .dashicons,
+.webp-status-converted-no-backup .dashicons,
+.webp-status-available .dashicons,
+.webp-status-not-converted .dashicons {
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+/* Responsive Design */
+@media (max-width: 782px) {
+    .webp-cp-message {
+        top: 46px;
+        right: 10px;
+        left: 10px;
+        max-width: none;
+    }
+}
+
+/* Dark Mode Support */
+@media (prefers-color-scheme: dark) {
+    .webp-cp-convert-media,
+    .webp-cp-revert-media {
+        color: #72aee6;
+    }
+    
+    .webp-cp-convert-media:hover,
+    .webp-cp-revert-media:hover {
+        color: #9ec5e8;
+    }
+}
