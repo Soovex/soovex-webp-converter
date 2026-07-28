@@ -193,6 +193,9 @@ Converted images remain. Automatic serving stops. Settings are preserved.
 
 ## 🧾 Changelog
 
+### 1.0.3
+- Tested up to WordPress 7.0.2
+
 ### 1.0.2
 - Added comprehensive Help page
 - Improved UI & navigation
