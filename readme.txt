@@ -9,7 +9,7 @@ License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 Donate link: https://soovex.com/
 
-Convert WordPress images to WebP format automatically. Optimize images, improve page speed, boost SEO, and reduce bandwidth. Unlimited conversions with smart backups and bulk processing.
+Convert WordPress images to WebP automatically. Optimize page speed, boost SEO, and reduce bandwidth with unlimited conversions and smart backups.
 
 == Description ==
 
