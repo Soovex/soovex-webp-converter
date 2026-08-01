@@ -21,6 +21,7 @@ $options_to_remove = array(
     'webp_cp_enable_backup',
     'webp_cp_backup_reminder',
     'webp_cp_backup_deletion_duration',
+    'webp_cp_backup_deletion_date',
     'webp_cp_custom_duration',
     'webp_cp_auto_convert',
     'webp_cp_lazy_load',
@@ -37,21 +38,20 @@ global $wpdb;
 $table_name = $wpdb->prefix . 'webp_cp_activity_log';
 $wpdb->query("DROP TABLE IF EXISTS $table_name");
 
-// Clean up backup files
+// Clean up backup files recursively
 $upload_dir = wp_upload_dir();
 $backup_dir = $upload_dir['basedir'] . '/webp-cp-backups';
 
 if (is_dir($backup_dir)) {
-    // Get all files in backup directory
-    $files = glob($backup_dir . '/*');
-    
+    $it = new RecursiveDirectoryIterator($backup_dir, RecursiveDirectoryIterator::SKIP_DOTS);
+    $files = new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST);
     foreach ($files as $file) {
-        if (is_file($file)) {
-            unlink($file);
+        if ($file->isDir()) {
+            rmdir($file->getRealPath());
+        } else {
+            unlink($file->getRealPath());
         }
     }
-    
-    // Remove backup directory
     rmdir($backup_dir);
 }
 

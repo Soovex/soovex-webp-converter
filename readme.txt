@@ -3,7 +3,7 @@ Contributors: imustafiur
 Tags: webp, image optimization, converter, performance, seo
 Requires at least: 6.4
 Tested up to: 7.0.2
-Stable tag: 1.0.3
+Stable tag: 1.0.4
 Requires PHP: 7.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
@@ -427,6 +427,9 @@ You can reset all plugin settings and data using the "Reset Everything" option i
 6. **URL Conversion** - Tool for converting images by providing their URLs
 
 == Changelog ==
+
+= 1.0.4 =
+* Version bump
 
 = 1.0.3 =
 * Tested up to WordPress 7.0.2

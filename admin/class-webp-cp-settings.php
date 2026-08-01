@@ -32,9 +32,6 @@ class WebP_CP_Settings {
         // Register settings
         add_action('admin_init', array($this, 'register_settings'));
         
-        // Add AJAX handler for saving settings
-        add_action('wp_ajax_webp_cp_save_settings', array($this, 'save_settings'));
-        
         // Add cron job for backup reminder
         add_action('webp_cp_backup_reminder_cron', array($this, 'backup_reminder_cron'));
         

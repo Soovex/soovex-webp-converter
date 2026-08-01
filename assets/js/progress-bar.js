@@ -143,12 +143,18 @@ jQuery(document).ready(function($) {
     var successEl = $('#webp-cp-success');
     var failedEl = $('#webp-cp-failed');
     
-    var progressInterval = null;
     var currentProgressKey = null;
+    var isPaused = false;
+    var isStopped = false;
+    var isBatchRunning = false;
     
     // Close progress modal
     $('#webp-cp-progress-close').on('click', function() {
-        hideProgressModal();
+        if (!isBatchRunning || isPaused || isStopped) {
+            hideProgressModal();
+        } else if (confirm('A conversion is in progress. Do you want to stop it?')) {
+            stopConversion();
+        }
     });
     
     // Pause button
@@ -172,13 +178,16 @@ jQuery(document).ready(function($) {
         }
     });
     
-    // Show progress modal
+    // Show progress modal and start batch execution
     function showProgressModal(progressKey, total) {
         currentProgressKey = progressKey;
+        isPaused = false;
+        isStopped = false;
+        isBatchRunning = false;
         progressModal.show();
         
         // Update initial stats
-        totalEl.text(total);
+        totalEl.text(total || '0');
         completedEl.text('0');
         successEl.text('0');
         failedEl.text('0');
@@ -193,132 +202,119 @@ jQuery(document).ready(function($) {
         $('#webp-cp-resume-btn').hide();
         $('#webp-cp-stop-btn').show();
         
-        // Start progress polling
-        startProgressPolling();
+        // Kick off batch processing immediately
+        processNextBatch();
     }
     
     // Hide progress modal
     function hideProgressModal() {
         progressModal.hide();
-        if (progressInterval) {
-            clearInterval(progressInterval);
-            progressInterval = null;
-        }
         currentProgressKey = null;
+        isBatchRunning = false;
     }
     
-    // Start progress polling
-    function startProgressPolling() {
-        if (progressInterval) {
-            clearInterval(progressInterval);
+    // Process next batch of images sequentially via AJAX
+    function processNextBatch() {
+        if (!currentProgressKey || isPaused || isStopped || isBatchRunning) {
+            return;
         }
         
-        progressInterval = setInterval(function() {
-            if (!currentProgressKey) {
-                return;
-            }
-            
-            $.ajax({
-                url: webp_cp_vars.ajax_url,
-                type: 'POST',
-                data: {
-                    action: 'webp_cp_get_conversion_progress',
-                    progress_key: currentProgressKey,
-                    nonce: webp_cp_vars.nonce
-                },
-                success: function(response) {
-                    if (response.success) {
-                        updateProgress(response.data);
+        isBatchRunning = true;
+        
+        $.ajax({
+            url: webp_cp_vars.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'webp_cp_process_next_batch',
+                progress_key: currentProgressKey,
+                nonce: webp_cp_vars.nonce
+            },
+            timeout: 120000, // 2 minutes timeout for large images
+            success: function(response) {
+                isBatchRunning = false;
+                
+                if (response.success && response.data) {
+                    var data = response.data;
+                    updateProgress(data);
+                    
+                    if (data.status === 'paused') {
+                        isPaused = true;
+                        $('#webp-cp-pause-btn').hide();
+                        $('#webp-cp-resume-btn').show();
+                        progressText.text('Conversion paused (' + data.completed + '/' + data.total + ')');
+                    } else if (data.status === 'stopped') {
+                        isStopped = true;
+                        $('#webp-cp-pause-btn').hide();
+                        $('#webp-cp-resume-btn').hide();
+                        $('#webp-cp-stop-btn').hide();
+                        progressText.text('Conversion stopped (' + data.completed + '/' + data.total + ')');
+                    } else if (data.status === 'completed' || parseInt(data.completed, 10) >= parseInt(data.total, 10)) {
+                        // Completed successfully
+                        $('#webp-cp-pause-btn').hide();
+                        $('#webp-cp-resume-btn').hide();
+                        $('#webp-cp-stop-btn').hide();
                         
-                        // Update button states based on status
-                        if (response.data.status === 'paused') {
-                            $('#webp-cp-pause-btn').hide();
-                            $('#webp-cp-resume-btn').show();
-                            progressText.text('Conversion paused (' + response.data.completed + '/' + response.data.total + ')');
-                        } else if (response.data.status === 'stopped') {
-                            $('#webp-cp-pause-btn').hide();
-                            $('#webp-cp-resume-btn').hide();
-                            $('#webp-cp-stop-btn').hide();
-                            progressText.text('Conversion stopped (' + response.data.completed + '/' + response.data.total + ')');
-                        } else if (response.data.status === 'completed') {
-                            clearInterval(progressInterval);
-                            progressInterval = null;
+                        progressText.text('Conversion completed!');
+                        progressPercentage.text('100%');
+                        progressBar.css('width', '100%');
+                        currentImageContainer.hide();
+                        
+                        setTimeout(function() {
+                            hideProgressModal();
                             
-                            // Hide control buttons
-                            $('#webp-cp-pause-btn').hide();
-                            $('#webp-cp-resume-btn').hide();
-                            $('#webp-cp-stop-btn').hide();
-                            
-                            // Show completion message
-                            progressText.text('Conversion completed!');
-                            progressPercentage.text('100%');
-                            progressBar.css('width', '100%');
-                            currentImageContainer.hide();
-                            
-                            // Auto-hide after 3 seconds
-                            setTimeout(function() {
-                                hideProgressModal();
-                                
-                                // Show detailed success message with reload button
-                                showDetailedMessage(
-                                    'Conversion Completed Successfully!',
-                                    'Successfully converted ' + response.data.success + ' images. ' + 
-                                    (response.data.failed > 0 ? response.data.failed + ' images failed to convert. ' : '') +
-                                    'Storage space has been optimized.',
-                                    'success',
-                                    response.data.success,
-                                    response.data.failed
-                                );
-                            }, 3000);
-                        } else {
-                            // Processing - show pause button, hide resume
-                            $('#webp-cp-pause-btn').show();
-                            $('#webp-cp-resume-btn').hide();
-                        }
+                            showDetailedMessage(
+                                'Conversion Completed Successfully!',
+                                'Successfully converted ' + data.success + ' images. ' + 
+                                (data.failed > 0 ? data.failed + ' images failed to convert. ' : '') +
+                                'Storage space has been optimized.',
+                                'success',
+                                data.success,
+                                data.failed
+                            );
+                        }, 1500);
                     } else {
-                        // Progress check failed - show error message
-                        clearInterval(progressInterval);
-                        progressInterval = null;
-                        
-                        hideProgressModal();
-                        
-                        showDetailedMessage(
-                            'Conversion Failed',
-                            'An error occurred during the conversion process. Please try again.',
-                            'error',
-                            0,
-                            0
-                        );
+                        // Continue next batch
+                        if (!isPaused && !isStopped) {
+                            setTimeout(processNextBatch, 50);
+                        }
                     }
-                },
-                error: function() {
-                    // Progress check failed - show error message
-                    clearInterval(progressInterval);
-                    progressInterval = null;
-                    
+                } else {
+                    var errorMsg = (response.data && response.data.message) ? response.data.message : 'An error occurred during conversion.';
                     hideProgressModal();
-                    
-                    showDetailedMessage(
-                        'Connection Error',
-                        'Unable to check conversion progress. Please check your connection and try again.',
-                        'error',
-                        0,
-                        0
-                    );
+                    showDetailedMessage('Conversion Error', errorMsg, 'error', 0, 0);
                 }
-            });
-        }, 1000); // Check every second
+            },
+            error: function(xhr, status, error) {
+                isBatchRunning = false;
+                if (isStopped) {
+                    return;
+                }
+                
+                // If it timed out or network blip, retry once after short delay before failing
+                hideProgressModal();
+                showDetailedMessage(
+                    'Connection Error',
+                    'Unable to complete batch conversion. Please check your connection and try again.',
+                    'error',
+                    0,
+                    0
+                );
+            }
+        });
     }
     
     // Update progress display
     function updateProgress(data) {
-        var percentage = Math.round((data.completed / data.total) * 100);
+        var total = parseInt(data.total, 10) || 1;
+        var completed = parseInt(data.completed, 10) || 0;
+        var percentage = Math.min(100, Math.round((completed / total) * 100));
         
         progressBar.css('width', percentage + '%');
         progressPercentage.text(percentage + '%');
-        completedEl.text(data.completed);
-        successEl.text(data.success);
-        failedEl.text(data.failed);
+        totalEl.text(total);
+        completedEl.text(completed);
+        successEl.text(data.success || 0);
+        failedEl.text(data.failed || 0);
         
         if (data.current_image) {
             currentImageName.text(data.current_image);
@@ -327,8 +323,8 @@ jQuery(document).ready(function($) {
             currentImageContainer.hide();
         }
         
-        if (data.completed < data.total && data.status === 'processing') {
-            progressText.text('Converting images... (' + data.completed + '/' + data.total + ')');
+        if (completed < total && data.status === 'processing') {
+            progressText.text('Converting images... (' + completed + '/' + total + ')');
         }
     }
     
@@ -338,6 +334,11 @@ jQuery(document).ready(function($) {
             return;
         }
         
+        isPaused = true;
+        $('#webp-cp-pause-btn').hide();
+        $('#webp-cp-resume-btn').show();
+        progressText.text('Conversion paused...');
+        
         $.ajax({
             url: webp_cp_vars.ajax_url,
             type: 'POST',
@@ -345,13 +346,6 @@ jQuery(document).ready(function($) {
                 action: 'webp_cp_pause_conversion',
                 progress_key: currentProgressKey,
                 nonce: webp_cp_vars.nonce
-            },
-            success: function(response) {
-                if (response.success) {
-                    $('#webp-cp-pause-btn').hide();
-                    $('#webp-cp-resume-btn').show();
-                    progressText.text('Conversion paused...');
-                }
             }
         });
     }
@@ -361,6 +355,11 @@ jQuery(document).ready(function($) {
         if (!currentProgressKey) {
             return;
         }
+        
+        isPaused = false;
+        $('#webp-cp-pause-btn').show();
+        $('#webp-cp-resume-btn').hide();
+        progressText.text('Resuming conversion...');
         
         $.ajax({
             url: webp_cp_vars.ajax_url,
@@ -372,9 +371,7 @@ jQuery(document).ready(function($) {
             },
             success: function(response) {
                 if (response.success) {
-                    $('#webp-cp-pause-btn').show();
-                    $('#webp-cp-resume-btn').hide();
-                    progressText.text('Resuming conversion...');
+                    processNextBatch();
                 }
             }
         });
@@ -386,6 +383,13 @@ jQuery(document).ready(function($) {
             return;
         }
         
+        isStopped = true;
+        $('#webp-cp-pause-btn').hide();
+        $('#webp-cp-resume-btn').hide();
+        $('#webp-cp-stop-btn').hide();
+        
+        progressText.text('Conversion stopped');
+        
         $.ajax({
             url: webp_cp_vars.ajax_url,
             type: 'POST',
@@ -395,29 +399,21 @@ jQuery(document).ready(function($) {
                 nonce: webp_cp_vars.nonce
             },
             success: function(response) {
-                if (response.success) {
-                    clearInterval(progressInterval);
-                    progressInterval = null;
+                var completed = (response.data && response.data.completed !== undefined) ? response.data.completed : completedEl.text();
+                var success = (response.data && response.data.success !== undefined) ? response.data.success : successEl.text();
+                var failed = (response.data && response.data.failed !== undefined) ? response.data.failed : failedEl.text();
+                
+                setTimeout(function() {
+                    hideProgressModal();
                     
-                    $('#webp-cp-pause-btn').hide();
-                    $('#webp-cp-resume-btn').hide();
-                    $('#webp-cp-stop-btn').hide();
-                    
-                    progressText.text('Conversion stopped');
-                    
-                    // Auto-hide after 2 seconds
-                    setTimeout(function() {
-                        hideProgressModal();
-                        
-                        showDetailedMessage(
-                            'Conversion Stopped',
-                            'Conversion has been stopped. ' + response.data.completed + ' images were processed before stopping.',
-                            'warning',
-                            response.data.success || 0,
-                            response.data.failed || 0
-                        );
-                    }, 2000);
-                }
+                    showDetailedMessage(
+                        'Conversion Stopped',
+                        'Conversion has been stopped. ' + completed + ' images were processed before stopping.',
+                        'warning',
+                        success,
+                        failed
+                    );
+                }, 1000);
             }
         });
     }
@@ -480,6 +476,13 @@ jQuery(document).ready(function($) {
         $message.find('.webp-cp-reload-page').on('click', function() {
             location.reload();
         });
+    }
+    
+    // Backward-compatibility / retry alias
+    function startProgressPolling() {
+        if (!isBatchRunning && currentProgressKey && !isPaused && !isStopped) {
+            processNextBatch();
+        }
     }
     
     // Expose functions globally

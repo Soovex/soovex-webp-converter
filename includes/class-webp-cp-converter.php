@@ -52,7 +52,6 @@ class WebP_CP_Converter {
      * @return void
      */
     public function auto_convert_new_attachment($attachment_id) {
-        
         // Check if auto convert is enabled
         if (!get_option('webp_cp_auto_convert', 0)) {
             return;
@@ -92,7 +91,6 @@ class WebP_CP_Converter {
      * @return void
      */
     public function auto_convert_attachment($attachment_id) {
-        
         // Check if auto convert is still enabled
         if (!get_option('webp_cp_auto_convert', 0)) {
             return;
@@ -104,7 +102,7 @@ class WebP_CP_Converter {
         }
         
         // Convert the image
-        $result = $this->convert_image($attachment_id);
+        $this->convert_image($attachment_id);
     }
     
     /**
@@ -142,7 +140,7 @@ class WebP_CP_Converter {
             return false;
         }
         
-        // Check if image is already converted (Bug #9)
+        // Check if image is already converted
         if (webp_cp_is_attachment_converted($attachment_id)) {
             $this->log_conversion($attachment_id, '', '', __('Skipped - Already converted', 'soovex-webp-converter'));
             return false;
@@ -165,37 +163,60 @@ class WebP_CP_Converter {
         
         // Get file names for logging
         $original_file_name = basename($attachment_path);
-        $webp_file_name = $original_file_name . '.webp';
         
         // Create backup if enabled
-        if (!$this->create_backup_if_enabled($attachment_id, $original_file_name, $webp_file_name)) {
+        if (!$this->create_backup_if_enabled($attachment_id, $original_file_name, $original_file_name . '.webp')) {
             return false;
         }
         
         // Validate file and check resources
-        if (!$this->validate_file_for_conversion($attachment_path, $attachment_id, $original_file_name, $webp_file_name)) {
+        if (!$this->validate_file_for_conversion($attachment_path, $attachment_id, $original_file_name, $original_file_name . '.webp')) {
             return false;
         }
+        
+        $quality = get_option('webp_cp_compression_quality', 82);
+        $dir = dirname($attachment_path);
+        $base_name = pathinfo($attachment_path, PATHINFO_FILENAME);
+        
+        // Collision-free WebP filename generation
+        $desired_webp_name = $base_name . '.webp';
+        $target_webp_path = $dir . '/' . $desired_webp_name;
+        
+        // If a file with this name already exists in the folder (from a different attachment / format), make it unique
+        if (file_exists($target_webp_path)) {
+            if (!function_exists('wp_unique_filename')) {
+                require_once(ABSPATH . 'wp-admin/includes/file.php');
+            }
+            $unique_filename = wp_unique_filename($dir, $desired_webp_name);
+            $target_webp_path = $dir . '/' . $unique_filename;
+        }
+        
+        $temp_webp_path = $target_webp_path . '.tmp';
+        $webp_file_name = basename($target_webp_path);
         
         // Convert main image
-        $webp_path = $attachment_path . '.webp';
-        $quality = get_option('webp_cp_compression_quality', 82);
-        
-        if (!$this->convert_image_to_webp($attachment_path, $webp_path, $file_ext, $quality, $attachment_id, $original_file_name, $webp_file_name)) {
+        if (!$this->convert_image_to_webp($attachment_path, $temp_webp_path, $file_ext, $quality, $attachment_id, $original_file_name, $webp_file_name)) {
+            if (file_exists($temp_webp_path)) {
+                @unlink($temp_webp_path);
+            }
             return false;
         }
         
-        // Move and update main file
-        $new_webp_path = str_replace('.' . $file_ext, '.webp', $attachment_path);
-        if (!$this->move_webp_file($webp_path, $new_webp_path, $attachment_id, $original_file_name, $webp_file_name)) {
+        // Move temp file to final WebP path
+        if (!$this->move_webp_file($temp_webp_path, $target_webp_path, $attachment_id, $original_file_name, $webp_file_name)) {
             return false;
         }
         
-        // Process size variants
-        $new_metadata = $this->process_size_variants($metadata, $attachment_path, $file_ext, $quality);
+        // Process size variants (thumbnails)
+        $new_metadata = $this->process_size_variants($metadata, $attachment_path, $target_webp_path, $file_ext, $quality, $attachment_id);
         
         // Update attachment in database
-        $this->update_attachment_to_webp($attachment_id, $new_webp_path, $new_metadata);
+        $this->update_attachment_to_webp($attachment_id, $target_webp_path, $new_metadata);
+        
+        // Remove original main image on disk if target path is different and original still exists
+        if (file_exists($attachment_path) && $attachment_path !== $target_webp_path) {
+            @unlink($attachment_path);
+        }
         
         // Log successful conversion
         $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, __('Converted', 'soovex-webp-converter'));
@@ -210,123 +231,134 @@ class WebP_CP_Converter {
      * @return bool True on success, false on failure
      */
     public function revert_image($attachment_id) {
-        // Get backup instance
-        $backup = WebP_CP_Backup::get_instance();
-        
-        // Get attachment path
-        $attachment_path = get_attached_file($attachment_id);
-        
-        // Check if the attachment exists
-        if (!file_exists($attachment_path)) {
-            $this->log_conversion($attachment_id, '', '', __('Failed - File not found', 'soovex-webp-converter'));
+        $attachment_id = intval($attachment_id);
+        if ($attachment_id <= 0) {
             return false;
         }
         
-        // Check if backup exists
-        $upload_dir = wp_upload_dir();
-        $backup_dir = $upload_dir['basedir'] . '/webp-cp-backups';
+        // Get backup instance
+        $backup = WebP_CP_Backup::get_instance();
         
-        // For converted WebP files, we need to find the original backup
-        // The backup was created with the original filename before conversion
-        $base_name = pathinfo($attachment_path, PATHINFO_FILENAME);
-        $original_extensions = array('jpg', 'jpeg', 'png');
-        $backup_file_path = null;
-        $original_file_ext = null;
-        
-        // Try to find backup with original extensions
-        foreach ($original_extensions as $ext) {
-            $test_backup_path = $backup_dir . '/' . $base_name . '.' . $ext;
-            if (file_exists($test_backup_path)) {
-                $backup_file_path = $test_backup_path;
-                $original_file_ext = $ext;
-                break;
-            }
-        }
-        
-        // Also check if there's a backup with the same name (in case backup was created after conversion)
-        if (!$backup_file_path) {
-            $test_backup_path = $backup_dir . '/' . basename($attachment_path);
-            if (file_exists($test_backup_path)) {
-                $backup_file_path = $test_backup_path;
-                $original_file_ext = strtolower(pathinfo($backup_file_path, PATHINFO_EXTENSION));
-            }
-        }
+        // Retrieve the backup file path
+        $backup_file_path = $backup->get_backup_file($attachment_id);
         
         if (!$backup_file_path || !file_exists($backup_file_path)) {
             $this->log_conversion($attachment_id, '', '', __('Failed - No backup found', 'soovex-webp-converter'));
             return false;
         }
         
+        // Get current attached file
+        $current_attached_path = get_attached_file($attachment_id);
+        $upload_dir = wp_upload_dir();
         
-        // Create new original file path
-        $new_original_path = str_replace('.webp', '.' . $original_file_ext, $attachment_path);
+        // Retrieve original metadata and properties
+        $original_metadata = get_post_meta($attachment_id, '_webp_cp_original_metadata', true);
+        $original_file_rel = get_post_meta($attachment_id, '_webp_cp_original_file', true);
+        $original_mime_type = get_post_meta($attachment_id, '_webp_cp_original_mime_type', true);
         
-        // Restore original file from backup
-        if (!copy($backup_file_path, $new_original_path)) {
+        // Fallbacks if post meta was not set (e.g. converted in prior plugin version)
+        if (empty($original_file_rel)) {
+            $backup_filename = basename($backup_file_path);
+            if ($current_attached_path) {
+                $current_dir = dirname($current_attached_path);
+                $rel_dir = str_replace($upload_dir['basedir'] . '/', '', $current_dir);
+                $original_file_rel = ($rel_dir !== $upload_dir['basedir']) ? $rel_dir . '/' . $backup_filename : $backup_filename;
+            } else {
+                $original_file_rel = $backup_filename;
+            }
+        }
+        
+        if (empty($original_mime_type)) {
+            $orig_ext = strtolower(pathinfo($backup_file_path, PATHINFO_EXTENSION));
+            $original_mime_type = ($orig_ext === 'png') ? 'image/png' : 'image/jpeg';
+        }
+        
+        // Determine full restored original file path
+        $restored_original_path = $upload_dir['basedir'] . '/' . $original_file_rel;
+        $restored_dir = dirname($restored_original_path);
+        
+        if (!file_exists($restored_dir)) {
+            wp_mkdir_p($restored_dir);
+        }
+        
+        // Restore main original file from backup
+        if (!copy($backup_file_path, $restored_original_path)) {
             $this->log_conversion($attachment_id, '', '', __('Failed - Could not restore from backup', 'soovex-webp-converter'));
             return false;
         }
         
-        // Update attachment metadata to reflect original format
-        $metadata = wp_get_attachment_metadata($attachment_id);
-        $new_metadata = $metadata;
-        $new_metadata['file'] = str_replace('webp', $original_file_ext, $metadata['file']);
-        $new_metadata['sizes'] = array();
-        
-        // Process size variants
-        if (isset($metadata['sizes'])) {
-            foreach ($metadata['sizes'] as $size => $size_data) {
-                // Get size file path
-                $size_path = pathinfo($attachment_path, PATHINFO_DIRNAME) . '/' . $size_data['file'];
-                
-                // Get size backup file path
-                $size_backup_file_path = $backup_dir . '/' . $size_data['file'];
-                
-                // Restore size file from backup
-                if (file_exists($size_backup_file_path)) {
-                    copy($size_backup_file_path, $size_path);
+        // Clean up converted WebP thumbnails and restore original thumbnails
+        $current_metadata = wp_get_attachment_metadata($attachment_id);
+        if (isset($current_metadata['sizes']) && is_array($current_metadata['sizes'])) {
+            $current_dir = $current_attached_path ? dirname($current_attached_path) : $restored_dir;
+            foreach ($current_metadata['sizes'] as $size => $size_data) {
+                if (isset($size_data['file'])) {
+                    $webp_thumb_path = $current_dir . '/' . $size_data['file'];
+                    if (file_exists($webp_thumb_path) && strtolower(pathinfo($webp_thumb_path, PATHINFO_EXTENSION)) === 'webp') {
+                        @unlink($webp_thumb_path);
+                    }
                 }
-                
-                // Update size metadata
-                $new_size_data = $size_data;
-                $new_size_data['file'] = str_replace('webp', $original_file_ext, $size_data['file']);
-                $new_size_data['mime-type'] = 'image/' . ($original_file_ext === 'jpg' || $original_file_ext === 'jpeg' ? 'jpeg' : $original_file_ext);
-                $new_metadata['sizes'][$size] = $new_size_data;
             }
         }
         
-        // Update attachment post
+        // Restore size thumbnails from attachment backup folder
+        $att_backup_dir = $backup->get_backup_dir($attachment_id);
+        $legacy_backup_dir = $upload_dir['basedir'] . '/webp-cp-backups';
+        
+        if (is_array($original_metadata) && isset($original_metadata['sizes'])) {
+            foreach ($original_metadata['sizes'] as $size => $size_data) {
+                if (isset($size_data['file'])) {
+                    $orig_thumb_file = $size_data['file'];
+                    $target_thumb_path = $restored_dir . '/' . $orig_thumb_file;
+                    
+                    // Look in isolated backup dir first, then legacy flat backup dir
+                    $thumb_backup_path = $att_backup_dir . '/' . $orig_thumb_file;
+                    if (!file_exists($thumb_backup_path)) {
+                        $thumb_backup_path = $legacy_backup_dir . '/' . $orig_thumb_file;
+                    }
+                    
+                    if (file_exists($thumb_backup_path)) {
+                        @copy($thumb_backup_path, $target_thumb_path);
+                    }
+                }
+            }
+        }
+        
+        // Update attachment post mime type
         $attachment_post = array(
             'ID' => $attachment_id,
-            'post_mime_type' => 'image/' . ($original_file_ext === 'jpg' || $original_file_ext === 'jpeg' ? 'jpeg' : $original_file_ext)
+            'post_mime_type' => $original_mime_type
         );
         wp_update_post($attachment_post);
         
-        // Update attachment metadata
-        wp_update_attachment_metadata($attachment_id, $new_metadata);
-        
         // Update attached file path
-        update_attached_file($attachment_id, $new_original_path);
+        update_attached_file($attachment_id, $restored_original_path);
         
-        // Regenerate attachment metadata to ensure proper display
-        $this->regenerate_attachment_metadata($attachment_id, $new_original_path);
-        
-        // Delete the WebP file
-        if (file_exists($attachment_path)) {
-            unlink($attachment_path);
+        // Restore or regenerate metadata
+        if (is_array($original_metadata) && !empty($original_metadata)) {
+            $original_metadata['file'] = $original_file_rel;
+            wp_update_attachment_metadata($attachment_id, $original_metadata);
+        } else {
+            $this->regenerate_attachment_metadata($attachment_id, $restored_original_path);
         }
         
-        // Get original file name
-        $original_file_name = basename($attachment_path);
+        // Delete the main converted WebP file if it's different from the restored path
+        if ($current_attached_path && file_exists($current_attached_path) && $current_attached_path !== $restored_original_path) {
+            @unlink($current_attached_path);
+        }
         
-        // Get WebP file name
-        $webp_file_name = $original_file_name . '.webp';
+        // Clear caches
+        wp_cache_delete($attachment_id, 'posts');
+        clean_post_cache($attachment_id);
+        
+        $original_file_name = basename($restored_original_path);
+        $webp_file_name = $current_attached_path ? basename($current_attached_path) : $original_file_name . '.webp';
         
         // Log the reversion
         $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, __('Reverted', 'soovex-webp-converter'));
         
-        // Clean up backup files after successful reversion
-        $this->cleanup_backup_files($attachment_id);
+        // Clean up backup files and directory for this attachment
+        $backup->delete_backup($attachment_id);
         
         return true;
     }
@@ -337,47 +369,9 @@ class WebP_CP_Converter {
      * @param int $attachment_id The attachment ID
      * @return void
      */
-    private function cleanup_backup_files($attachment_id) {
-        $upload_dir = wp_upload_dir();
-        $backup_dir = $upload_dir['basedir'] . '/webp-cp-backups';
-        
-        if (!is_dir($backup_dir)) {
-            return;
-        }
-        
-        // Get attachment metadata to find all related files
-        $metadata = wp_get_attachment_metadata($attachment_id);
-        $attachment_path = get_attached_file($attachment_id);
-        
-        if (!$attachment_path) {
-            return;
-        }
-        
-        $files_to_cleanup = array();
-        
-        // Add main file
-        $files_to_cleanup[] = basename($attachment_path);
-        
-        // Add size variants
-        if (isset($metadata['sizes'])) {
-            foreach ($metadata['sizes'] as $size => $size_data) {
-                $files_to_cleanup[] = $size_data['file'];
-            }
-        }
-        
-        // Remove backup files
-        foreach ($files_to_cleanup as $filename) {
-            // Sanitize filename for security
-            $safe_filename = sanitize_file_name($filename);
-            $backup_file_path = $backup_dir . '/' . $safe_filename;
-            
-            if (file_exists($backup_file_path)) {
-                if (unlink($backup_file_path)) {
-                } else {
-                }
-            }
-        }
-        
+    public function cleanup_backup_files($attachment_id) {
+        $backup = WebP_CP_Backup::get_instance();
+        $backup->delete_backup($attachment_id);
     }
     
     /**
@@ -393,6 +387,10 @@ class WebP_CP_Converter {
         global $wpdb;
         
         $table_name = $wpdb->prefix . 'webp_cp_activity_log';
+        $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name));
+        if (!$table_exists) {
+            return false;
+        }
         
         $data = array(
             'attachment_id' => $attachment_id,
@@ -403,7 +401,6 @@ class WebP_CP_Converter {
         );
         
         $format = array('%d', '%s', '%s', '%s', '%s');
-        
         $wpdb->insert($table_name, $data, $format);
         
         return $wpdb->insert_id;
@@ -527,7 +524,6 @@ class WebP_CP_Converter {
                     $this->serve_file($file_path, 'image/webp');
                 } else {
                     // Check if this file has been converted to WebP
-                    // Look for the WebP version with the same base name
                     $base_name = pathinfo($file_path, PATHINFO_FILENAME);
                     $webp_path = dirname($file_path) . '/' . $base_name . '.webp';
                     
@@ -592,22 +588,18 @@ class WebP_CP_Converter {
         
         // Get attachment path
         $attachment_path = get_attached_file($attachment_id);
-        
         if (!$attachment_path) {
             return $image;
         }
         
         // Check if this is already a WebP image
         $file_ext = strtolower(pathinfo($attachment_path, PATHINFO_EXTENSION));
-        
         if ($file_ext === 'webp') {
-            // This is already a WebP image, return as is
             return $image;
         }
         
         // Check if WebP version exists
         $webp_path = $attachment_path . '.webp';
-        
         if (!file_exists($webp_path)) {
             return $image;
         }
@@ -681,7 +673,7 @@ class WebP_CP_Converter {
         $attachment_path = get_attached_file($attachment_id);
         
         if (!$attachment_path || !file_exists($attachment_path)) {
-            // Try to find the file in uploads directory
+            // Try to find the file in uploads directory using metadata
             $upload_dir = wp_upload_dir();
             $upload_path = $upload_dir['basedir'];
             
@@ -780,7 +772,9 @@ class WebP_CP_Converter {
             if ($file_ext === 'png') {
                 $image = imagecreatefrompng($source_path);
                 if (!$image) {
-                    $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, __('Failed - Could not load PNG image', 'soovex-webp-converter'));
+                    if ($attachment_id > 0) {
+                        $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, __('Failed - Could not load PNG image', 'soovex-webp-converter'));
+                    }
                     return false;
                 }
                 imagepalettetotruecolor($image);
@@ -789,7 +783,9 @@ class WebP_CP_Converter {
             } else {
                 $image = imagecreatefromjpeg($source_path);
                 if (!$image) {
-                    $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, __('Failed - Could not load JPEG image', 'soovex-webp-converter'));
+                    if ($attachment_id > 0) {
+                        $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, __('Failed - Could not load JPEG image', 'soovex-webp-converter'));
+                    }
                     return false;
                 }
             }
@@ -797,16 +793,15 @@ class WebP_CP_Converter {
             $result = imagewebp($image, $destination_path, $quality);
             
             if (!$result) {
-                $error_msg = $file_ext === 'png' 
-                    ? __('Failed - Could not create WebP from PNG', 'soovex-webp-converter')
-                    : __('Failed - Could not create WebP from JPEG', 'soovex-webp-converter');
-                $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, $error_msg);
+                if ($attachment_id > 0) {
+                    $error_msg = $file_ext === 'png' 
+                        ? __('Failed - Could not create WebP from PNG', 'soovex-webp-converter')
+                        : __('Failed - Could not create WebP from JPEG', 'soovex-webp-converter');
+                    $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, $error_msg);
+                }
                 return false;
             }
         } finally {
-            // Clean up image resource - PHP will automatically handle garbage collection
-            // imagedestroy() is deprecated in PHP 8.0+ for GdImage objects
-            // We let PHP handle cleanup automatically for both resources and GdImage objects
             if ($image) {
                 unset($image);
             }
@@ -837,7 +832,7 @@ class WebP_CP_Converter {
             $move_attempts++;
             if ($move_attempts >= $max_attempts) {
                 if (file_exists($source_path)) {
-                    unlink($source_path);
+                    @unlink($source_path);
                 }
                 $this->log_conversion($attachment_id, $original_file_name, $webp_file_name, sprintf(__('Failed - Could not move WebP file after %d attempts', 'soovex-webp-converter'), $max_attempts));
                 return false;
@@ -853,33 +848,75 @@ class WebP_CP_Converter {
      * Process size variants (thumbnails)
      *
      * @param array $metadata Attachment metadata
-     * @param string $attachment_path Main attachment path
+     * @param string $original_attachment_path Main attachment original path
+     * @param string $target_webp_path Main converted WebP path
      * @param string $file_ext File extension
      * @param int $quality Compression quality
+     * @param int $attachment_id Attachment ID
      * @return array Updated metadata
      */
-    private function process_size_variants($metadata, $attachment_path, $file_ext, $quality) {
-        $new_metadata = $metadata;
-        $new_metadata['file'] = str_replace($file_ext, 'webp', $metadata['file']);
-        $new_metadata['sizes'] = array();
+    private function process_size_variants($metadata, $original_attachment_path, $target_webp_path, $file_ext, $quality, $attachment_id = 0) {
+        $new_metadata = is_array($metadata) ? $metadata : array();
         
-        if (!isset($metadata['sizes']) || empty($metadata['sizes'])) {
+        $upload_dir = wp_upload_dir();
+        $relative_file = str_replace($upload_dir['basedir'] . '/', '', $target_webp_path);
+        $new_metadata['file'] = $relative_file;
+        
+        if (!isset($metadata['sizes']) || empty($metadata['sizes']) || !is_array($metadata['sizes'])) {
             return $new_metadata;
         }
         
+        $base_dir = dirname($target_webp_path);
+        $new_metadata['sizes'] = array();
+        
         foreach ($metadata['sizes'] as $size => $size_data) {
-            $size_path = pathinfo($attachment_path, PATHINFO_DIRNAME) . '/' . $size_data['file'];
-            $size_webp_path = $size_path . '.webp';
+            if (!isset($size_data['file'])) {
+                continue;
+            }
             
-            if ($this->convert_image_to_webp($size_path, $size_webp_path, $file_ext, $quality, 0, '', '')) {
-                if (file_exists($size_webp_path)) {
-                    rename($size_webp_path, $size_path);
+            $orig_size_filename = $size_data['file'];
+            $orig_size_path = dirname($original_attachment_path) . '/' . $orig_size_filename;
+            
+            // Determine WebP thumbnail filename
+            $size_base = pathinfo($orig_size_filename, PATHINFO_FILENAME);
+            $size_webp_filename = $size_base . '.webp';
+            $size_webp_path = $base_dir . '/' . $size_webp_filename;
+            
+            // Check for collision with existing files from different attachments
+            if (file_exists($size_webp_path) && $size_webp_path !== $orig_size_path) {
+                if (!function_exists('wp_unique_filename')) {
+                    require_once(ABSPATH . 'wp-admin/includes/file.php');
                 }
-                
-                $new_size_data = $size_data;
-                $new_size_data['file'] = str_replace($file_ext, 'webp', $size_data['file']);
-                $new_size_data['mime-type'] = 'image/webp';
-                $new_metadata['sizes'][$size] = $new_size_data;
+                $size_webp_filename = wp_unique_filename($base_dir, $size_base . '.webp');
+                $size_webp_path = $base_dir . '/' . $size_webp_filename;
+            }
+            
+            // Find source thumbnail file (from disk or from backup)
+            $source_size_path = file_exists($orig_size_path) ? $orig_size_path : '';
+            if (!$source_size_path && $attachment_id > 0) {
+                $backup_size = WebP_CP_Backup::get_instance()->get_backup_dir($attachment_id) . '/' . $orig_size_filename;
+                if (file_exists($backup_size)) {
+                    $source_size_path = $backup_size;
+                }
+            }
+            
+            if ($source_size_path && file_exists($source_size_path)) {
+                $temp_thumb_path = $size_webp_path . '.tmp';
+                if ($this->convert_image_to_webp($source_size_path, $temp_thumb_path, $file_ext, $quality, 0, '', '')) {
+                    if (file_exists($temp_thumb_path)) {
+                        rename($temp_thumb_path, $size_webp_path);
+                    }
+                    
+                    // Remove original thumbnail on disk if target WebP thumbnail exists and is distinct
+                    if (file_exists($orig_size_path) && $orig_size_path !== $size_webp_path) {
+                        @unlink($orig_size_path);
+                    }
+                    
+                    $new_size_data = $size_data;
+                    $new_size_data['file'] = $size_webp_filename;
+                    $new_size_data['mime-type'] = 'image/webp';
+                    $new_metadata['sizes'][$size] = $new_size_data;
+                }
             }
         }
         
@@ -902,6 +939,9 @@ class WebP_CP_Converter {
         wp_update_post($attachment_post);
         wp_update_attachment_metadata($attachment_id, $metadata);
         update_attached_file($attachment_id, $file_path);
-        $this->regenerate_attachment_metadata($attachment_id, $file_path);
+        
+        // Clear caches
+        wp_cache_delete($attachment_id, 'posts');
+        clean_post_cache($attachment_id);
     }
 }

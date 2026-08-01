@@ -43,20 +43,25 @@ function webp_cp_get_converted_images() {
     // First try to get from activity log (more reliable)
     global $wpdb;
     $table_name = $wpdb->prefix . 'webp_cp_activity_log';
-    $converted_logs = $wpdb->get_results($wpdb->prepare("SELECT DISTINCT attachment_id FROM `{$table_name}` WHERE status = %s", 'Converted'));
+    $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name));
     
     $converted_images = array();
-    foreach ($converted_logs as $log) {
-        $attachment_id = intval($log->attachment_id);
-        if ($attachment_id && get_post($attachment_id)) {
-            // Double-check that the file is actually WebP
-            if (webp_cp_is_attachment_converted($attachment_id)) {
-                $converted_images[] = $attachment_id;
+    
+    if ($table_exists) {
+        $converted_logs = $wpdb->get_results($wpdb->prepare("SELECT DISTINCT attachment_id FROM `{$table_name}` WHERE status = %s", 'Converted'));
+        
+        foreach ($converted_logs as $log) {
+            $attachment_id = intval($log->attachment_id);
+            if ($attachment_id && get_post($attachment_id)) {
+                // Double-check that the file is actually WebP
+                if (webp_cp_is_attachment_converted($attachment_id)) {
+                    $converted_images[] = $attachment_id;
+                }
             }
         }
     }
     
-    // If no converted images found in log, fallback to the original method
+    // If no converted images found in log, fallback to querying attachments
     if (empty($converted_images)) {
         $args = array(
             'post_type' => 'attachment',
@@ -71,14 +76,13 @@ function webp_cp_get_converted_images() {
         
         // Filter to only include images that are actually in WebP format
         foreach ($all_images as $image_id) {
-            // Check if the image is actually in WebP format
             if (webp_cp_is_attachment_converted($image_id)) {
                 $converted_images[] = $image_id;
             }
         }
     }
     
-    return $converted_images;
+    return array_unique($converted_images);
 }
 
 /**
@@ -88,60 +92,54 @@ function webp_cp_get_storage_saved() {
     global $wpdb;
     
     $table_name = $wpdb->prefix . 'webp_cp_activity_log';
-    $logs = $wpdb->get_results($wpdb->prepare("SELECT * FROM `{$table_name}` WHERE status = %s", 'Converted'));
+    $table_exists = $wpdb->get_var($wpdb->prepare("SHOW TABLES LIKE %s", $table_name));
     
     $storage_saved = 0;
+    $backup = WebP_CP_Backup::get_instance();
+    $processed_attachments = array();
     
-    foreach ($logs as $log) {
-        // Use attachment_id directly from the log instead of searching by title
-        $attachment_id = intval($log->attachment_id);
+    if ($table_exists) {
+        $logs = $wpdb->get_results($wpdb->prepare("SELECT DISTINCT attachment_id FROM `{$table_name}` WHERE status = %s", 'Converted'));
         
-        if ($attachment_id) {
-            // Get attachment path
-            $attachment_path = get_attached_file($attachment_id);
+        foreach ($logs as $log) {
+            $attachment_id = intval($log->attachment_id);
+            if (!$attachment_id || isset($processed_attachments[$attachment_id])) {
+                continue;
+            }
+            $processed_attachments[$attachment_id] = true;
             
+            $attachment_path = get_attached_file($attachment_id);
             if ($attachment_path && file_exists($attachment_path)) {
-                // Check if this is a WebP file (converted)
                 $file_ext = strtolower(pathinfo($attachment_path, PATHINFO_EXTENSION));
-                
                 if ($file_ext === 'webp') {
-                    // This is a converted WebP file, calculate savings from backup
-                    $upload_dir = wp_upload_dir();
-                    $backup_dir = $upload_dir['basedir'] . '/webp-cp-backups';
-                    
-                    // Get the base filename without extension to find the backup
-                    $base_filename = pathinfo($attachment_path, PATHINFO_FILENAME);
-                    $backup_file_path = null;
-                    
-                    // Try to find the backup file with original extensions
-                    $original_extensions = array('jpg', 'jpeg', 'png');
-                    foreach ($original_extensions as $ext) {
-                        $test_backup_path = $backup_dir . '/' . $base_filename . '.' . $ext;
-                        if (file_exists($test_backup_path)) {
-                            $backup_file_path = $test_backup_path;
-                            break;
+                    $backup_file_path = $backup->get_backup_file($attachment_id);
+                    if ($backup_file_path && file_exists($backup_file_path)) {
+                        $diff = filesize($backup_file_path) - filesize($attachment_path);
+                        if ($diff > 0) {
+                            $storage_saved += $diff;
                         }
                     }
                     
-                    // If no backup found with base filename, try with the full filename
-                    if (!$backup_file_path) {
-                        $backup_file_path = $backup_dir . '/' . basename($attachment_path);
-                    }
-                    
-                    if ($backup_file_path && file_exists($backup_file_path)) {
-                        // Calculate actual size difference between original backup and WebP file
-                        $original_size = filesize($backup_file_path);
-                        $webp_size = filesize($attachment_path);
-                        $storage_saved += ($original_size - $webp_size);
-                    }
-                } else {
-                    // This is an original file, check if WebP version exists
-                    $webp_path = $attachment_path . '.webp';
-                    
-                    if (file_exists($webp_path)) {
-                        $original_size = filesize($attachment_path);
-                        $webp_size = filesize($webp_path);
-                        $storage_saved += ($original_size - $webp_size);
+                    // Also calculate savings for size thumbnails
+                    $att_backup_dir = $backup->get_backup_dir($attachment_id);
+                    if (is_dir($att_backup_dir)) {
+                        $meta = wp_get_attachment_metadata($attachment_id);
+                        if (isset($meta['sizes']) && is_array($meta['sizes'])) {
+                            $base_dir = dirname($attachment_path);
+                            foreach ($meta['sizes'] as $size_data) {
+                                if (isset($size_data['file'])) {
+                                    $webp_thumb = $base_dir . '/' . $size_data['file'];
+                                    $orig_base = pathinfo($size_data['file'], PATHINFO_FILENAME);
+                                    $thumb_backups = glob($att_backup_dir . '/' . $orig_base . '.*');
+                                    if (!empty($thumb_backups) && file_exists($webp_thumb)) {
+                                        $thumb_diff = filesize($thumb_backups[0]) - filesize($webp_thumb);
+                                        if ($thumb_diff > 0) {
+                                            $storage_saved += $thumb_diff;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -251,36 +249,47 @@ function webp_cp_get_detailed_server_health() {
 function webp_cp_cleanup_orphaned_webp() {
     global $wpdb;
     
-    $table_name = $wpdb->prefix . 'webp_cp_activity_log';
     $upload_dir = wp_upload_dir();
+    $basedir = $upload_dir['basedir'];
     
-    // Get all WebP files in uploads directory
-    $webp_files = glob($upload_dir['basedir'] . '/**/*.webp');
+    if (!is_dir($basedir)) {
+        return 0;
+    }
+    
+    // Collect all registered attachment paths in WP
+    $attached_files = $wpdb->get_col("SELECT meta_value FROM {$wpdb->postmeta} WHERE meta_key = '_wp_attached_file'");
+    $registered_basenames = array();
+    
+    if (!empty($attached_files)) {
+        foreach ($attached_files as $file) {
+            $registered_basenames[basename($file)] = true;
+        }
+    }
     
     $cleaned_count = 0;
     
-    foreach ($webp_files as $webp_file) {
-        // Get the original file path
-        $original_file = str_replace('.webp', '', $webp_file);
+    try {
+        $it = new RecursiveDirectoryIterator($basedir, RecursiveDirectoryIterator::SKIP_DOTS);
+        $files = new RecursiveIteratorIterator($it);
         
-        // Check if original file exists
-        if (!file_exists($original_file)) {
-            // Check if this WebP file is logged in our database
-            $relative_path = str_replace($upload_dir['basedir'], '', $webp_file);
-            $original_relative = str_replace($upload_dir['basedir'], '', $original_file);
-            
-            $log_exists = $wpdb->get_var($wpdb->prepare(
-                "SELECT COUNT(*) FROM `{$table_name}` WHERE webp_image = %s",
-                basename($webp_file)
-            ));
-            
-            if (!$log_exists) {
-                // This is an orphaned WebP file, delete it
-                if (unlink($webp_file)) {
-                    $cleaned_count++;
+        foreach ($files as $file) {
+            if ($file->isFile() && strtolower($file->getExtension()) === 'webp') {
+                $webp_file = $file->getRealPath();
+                $basename = basename($webp_file);
+                
+                // If file is not registered as an attached file and not in backup dir
+                if (strpos($webp_file, 'webp-cp-backups') === false && !isset($registered_basenames[$basename])) {
+                    $original_file = preg_replace('/\.webp$/i', '', $webp_file);
+                    if (!file_exists($original_file)) {
+                        if (@unlink($webp_file)) {
+                            $cleaned_count++;
+                        }
+                    }
                 }
             }
         }
+    } catch (Exception $e) {
+        // Silently catch filesystem exceptions
     }
     
     return $cleaned_count;
@@ -348,15 +357,5 @@ function webp_cp_can_convert_attachment($attachment_id) {
  * Check if an attachment has a backup
  */
 function webp_cp_has_attachment_backup($attachment_id) {
-    $attachment_path = get_attached_file($attachment_id);
-    
-    if (!$attachment_path) {
-        return false;
-    }
-    
-    $upload_dir = wp_upload_dir();
-    $backup_dir = $upload_dir['basedir'] . '/webp-cp-backups';
-    $backup_file_path = $backup_dir . '/' . basename($attachment_path);
-    
-    return file_exists($backup_file_path);
+    return WebP_CP_Backup::get_instance()->has_backup($attachment_id);
 }

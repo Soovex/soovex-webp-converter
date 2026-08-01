@@ -3,7 +3,7 @@
  * Plugin Name: Soovex WebP Converter – Convert Images | Optimize & Compress | Unlimited Conversions
  * Plugin URI: https://soovex.com/
  * Description: Convert WordPress images to WebP automatically. Optimize page speed, boost SEO, and reduce bandwidth with unlimited conversions and smart backups.
- * Version: 1.0.3
+ * Version: 1.0.4
  * Requires at least: 6.4
  * Tested up to: 7.0.2
  * Requires PHP: 7.4
@@ -21,7 +21,7 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-define('WEBP_CP_VERSION', '1.0.3');
+define('WEBP_CP_VERSION', '1.0.4');
 define('WEBP_CP_PATH', plugin_dir_path(__FILE__));
 define('WEBP_CP_URL', plugin_dir_url(__FILE__));
 define('WEBP_CP_BASENAME', plugin_basename(__FILE__));

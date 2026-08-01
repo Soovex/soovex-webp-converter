@@ -36,6 +36,11 @@ class WebP_CP_Media_Library {
         // Add media library row actions
         add_filter('media_row_actions', array($this, 'add_media_row_actions'), 10, 2);
         
+        // Add media library bulk actions
+        add_filter('bulk_actions-upload', array($this, 'register_bulk_actions'));
+        add_filter('handle_bulk_actions-upload', array($this, 'handle_bulk_actions'), 10, 3);
+        add_action('admin_notices', array($this, 'display_bulk_action_notices'));
+        
         // Add admin scripts for media library
         add_action('admin_enqueue_scripts', array($this, 'enqueue_media_scripts'));
         
@@ -43,6 +48,66 @@ class WebP_CP_Media_Library {
         add_action('wp_ajax_webp_cp_convert_media', array($this, 'ajax_convert_media'));
         add_action('wp_ajax_webp_cp_revert_media', array($this, 'ajax_revert_media'));
         add_action('wp_ajax_webp_cp_check_media_status', array($this, 'ajax_check_media_status'));
+    }
+    
+    /**
+     * Register bulk actions in Media Library
+     */
+    public function register_bulk_actions($bulk_actions) {
+        $bulk_actions['webp_cp_bulk_convert'] = __('Convert to WebP', 'soovex-webp-converter');
+        $bulk_actions['webp_cp_bulk_revert'] = __('Revert to Original', 'soovex-webp-converter');
+        return $bulk_actions;
+    }
+    
+    /**
+     * Handle bulk actions in Media Library
+     */
+    public function handle_bulk_actions($redirect_to, $doaction, $post_ids) {
+        if ($doaction === 'webp_cp_bulk_convert') {
+            $converted = 0;
+            $converter = WebP_CP_Converter::get_instance();
+            foreach ($post_ids as $post_id) {
+                if (wp_attachment_is_image($post_id) && $converter->convert_image($post_id)) {
+                    $converted++;
+                }
+            }
+            $redirect_to = add_query_arg('webp_cp_bulk_converted', $converted, $redirect_to);
+            return $redirect_to;
+        }
+        
+        if ($doaction === 'webp_cp_bulk_revert') {
+            $reverted = 0;
+            $converter = WebP_CP_Converter::get_instance();
+            foreach ($post_ids as $post_id) {
+                if (wp_attachment_is_image($post_id) && $converter->revert_image($post_id)) {
+                    $reverted++;
+                }
+            }
+            $redirect_to = add_query_arg('webp_cp_bulk_reverted', $reverted, $redirect_to);
+            return $redirect_to;
+        }
+        
+        return $redirect_to;
+    }
+    
+    /**
+     * Display notices after bulk actions
+     */
+    public function display_bulk_action_notices() {
+        if (!empty($_REQUEST['webp_cp_bulk_converted'])) {
+            $count = intval($_REQUEST['webp_cp_bulk_converted']);
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                sprintf(_n('Successfully converted %d image to WebP.', 'Successfully converted %d images to WebP.', $count, 'soovex-webp-converter'), $count)
+            );
+        }
+        if (!empty($_REQUEST['webp_cp_bulk_reverted'])) {
+            $count = intval($_REQUEST['webp_cp_bulk_reverted']);
+            printf(
+                '<div class="notice notice-success is-dismissible"><p>%s</p></div>',
+                sprintf(_n('Successfully reverted %d image to original format.', 'Successfully reverted %d images to original format.', $count, 'soovex-webp-converter'), $count)
+            );
+        }
     }
     
     /**
@@ -233,43 +298,7 @@ class WebP_CP_Media_Library {
             return false;
         }
         
-        $attachment_path = get_attached_file($attachment_id);
-        $upload_dir = wp_upload_dir();
-        $backup_dir = $upload_dir['basedir'] . '/webp-cp-backups';
-        
-        // Check if this is a converted WebP file
-        $file_ext = strtolower(pathinfo($attachment_path, PATHINFO_EXTENSION));
-        
-        if ($file_ext === 'webp') {
-            // For converted WebP files, we need to find the original backup
-            // The backup was created with the original filename before conversion
-            // So we need to reconstruct the original filename
-            
-            // Get the base name without extension
-            $base_name = pathinfo($attachment_path, PATHINFO_FILENAME);
-            
-            // Try to find backup with original extensions
-            $original_extensions = array('jpg', 'jpeg', 'png');
-            
-            foreach ($original_extensions as $ext) {
-                $backup_file_path = $backup_dir . '/' . $base_name . '.' . $ext;
-                if (file_exists($backup_file_path)) {
-                    return true;
-                }
-            }
-            
-            // Also check if there's a backup with the same name (in case backup was created after conversion)
-            $backup_file_path = $backup_dir . '/' . basename($attachment_path);
-            if (file_exists($backup_file_path)) {
-                return true;
-            }
-            
-            return false;
-        } else {
-            // For original files, check if WebP version exists
-            $webp_path = $attachment_path . '.webp';
-            return file_exists($webp_path);
-        }
+        return WebP_CP_Backup::get_instance()->has_backup($attachment_id);
     }
     
     /**

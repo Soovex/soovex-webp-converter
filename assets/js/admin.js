@@ -26,37 +26,26 @@
                 return;
             }
             
-            // Show progress modal
-            if (typeof webp_cp_show_progress === 'function') {
-                var progressKey = 'webp_cp_conversion_progress_' + Date.now();
-                webp_cp_show_progress(progressKey, imageIds.length);
-            }
-            
-            // Start conversion
+            // Start conversion session
             $.ajax({
                 url: webp_cp_vars.ajax_url,
                 type: 'POST',
                 data: {
                     action: 'webp_cp_convert_multiple',
-                    image_ids: imageIds.join(','),
+                    image_ids: Array.isArray(imageIds) ? imageIds.join(',') : imageIds,
                     nonce: webp_cp_vars.nonce
                 },
                 success: function(response) {
-                    if (response.success) {
-                        // Progress modal is already shown, conversion will be tracked
-                    } else {
-                        // Hide progress modal and show error
-                        if (typeof webp_cp_hide_progress === 'function') {
-                            webp_cp_hide_progress();
+                    if (response.success && response.data) {
+                        if (typeof webp_cp_show_progress === 'function') {
+                            webp_cp_show_progress(response.data.progress_key, response.data.total);
                         }
-                        alert('Error: ' + response.data.message);
+                    } else {
+                        var errorMsg = (response.data && response.data.message) ? response.data.message : 'Error starting conversion.';
+                        alert('Error: ' + errorMsg);
                     }
                 },
                 error: function() {
-                    // Hide progress modal and show error
-                    if (typeof webp_cp_hide_progress === 'function') {
-                        webp_cp_hide_progress();
-                    }
                     alert('An error occurred while starting the conversion.');
                 }
             });

@@ -225,17 +225,28 @@ function webp_cp_ajax_convert_multiple() {
     }
     
     // Get image IDs
-    $image_ids = isset($_POST['image_ids']) ? sanitize_text_field($_POST['image_ids']) : '';
+    $raw_image_ids = isset($_POST['image_ids']) ? sanitize_text_field($_POST['image_ids']) : '';
     
-    if (empty($image_ids)) {
+    if (empty($raw_image_ids)) {
         wp_send_json_error(array('message' => 'No images selected.'));
     }
     
-    // Convert to array
-    $image_ids = explode(',', $image_ids);
+    // Parse and sanitize image IDs
+    $raw_array = is_array($raw_image_ids) ? $raw_image_ids : explode(',', $raw_image_ids);
+    $image_ids = array();
+    foreach ($raw_array as $id) {
+        $clean_id = intval(trim($id));
+        if ($clean_id > 0 && !in_array($clean_id, $image_ids)) {
+            $image_ids[] = $clean_id;
+        }
+    }
     
-    // Store conversion progress
-    $progress_key = 'webp_cp_conversion_progress_' . get_current_user_id();
+    if (empty($image_ids)) {
+        wp_send_json_error(array('message' => 'No valid images selected for conversion.'));
+    }
+    
+    // Store conversion progress with unique session key
+    $progress_key = 'webp_cp_prog_' . get_current_user_id() . '_' . time();
     $progress_data = array(
         'total' => count($image_ids),
         'completed' => 0,
@@ -243,67 +254,138 @@ function webp_cp_ajax_convert_multiple() {
         'failed' => 0,
         'current_image' => '',
         'status' => 'processing', // Status: processing, paused, stopped, completed
-        'all_images' => $image_ids // Store all images for resume functionality
+        'all_images' => $image_ids
     );
-    set_transient($progress_key, $progress_data, 300); // 5 minutes
-    
-    // Schedule conversion in batches
-    $batch_size = WEBP_CP_BATCH_SIZE_SMALL;
-    $batches = array_chunk($image_ids, $batch_size);
-    
-    foreach ($batches as $index => $batch) {
-        wp_schedule_single_event(time() + ($index * 2), 'webp_cp_convert_batch_progress', array($batch, $progress_key));
-    }
+    set_transient($progress_key, $progress_data, 3600); // 1 hour
     
     wp_send_json_success(array(
-        'message' => 'Conversion started. Processing ' . count($image_ids) . ' images...',
+        'message' => sprintf(__('Conversion started. Processing %d images...', 'soovex-webp-converter'), count($image_ids)),
         'progress_key' => $progress_key,
         'total' => count($image_ids)
     ));
 }
 
-// Convert batch with progress tracking
+// Process next batch of conversion (active client-driven runner)
+add_action('wp_ajax_webp_cp_process_next_batch', 'webp_cp_ajax_process_next_batch');
+function webp_cp_ajax_process_next_batch() {
+    // Check nonce
+    if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'webp_cp_nonce')) {
+        wp_send_json_error(array('message' => 'Security check failed.'));
+    }
+    
+    // Check user capabilities
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('message' => 'You do not have permission to perform this action.'));
+    }
+    
+    $progress_key = isset($_POST['progress_key']) ? sanitize_text_field($_POST['progress_key']) : '';
+    if (empty($progress_key)) {
+        wp_send_json_error(array('message' => 'Invalid progress key.'));
+    }
+    
+    $progress_data = get_transient($progress_key);
+    if (!$progress_data || !is_array($progress_data)) {
+        wp_send_json_error(array('message' => 'Progress session not found or expired.'));
+    }
+    
+    // Check status
+    if (isset($progress_data['status'])) {
+        if ($progress_data['status'] === 'paused') {
+            wp_send_json_success($progress_data);
+            return;
+        }
+        if ($progress_data['status'] === 'stopped') {
+            wp_send_json_success($progress_data);
+            return;
+        }
+    }
+    
+    $all_images = isset($progress_data['all_images']) && is_array($progress_data['all_images']) ? $progress_data['all_images'] : array();
+    $completed = isset($progress_data['completed']) ? intval($progress_data['completed']) : 0;
+    $total = isset($progress_data['total']) ? intval($progress_data['total']) : count($all_images);
+    
+    if ($completed >= $total || empty($all_images)) {
+        $progress_data['status'] = 'completed';
+        set_transient($progress_key, $progress_data, 3600);
+        wp_send_json_success($progress_data);
+        return;
+    }
+    
+    $batch_size = defined('WEBP_CP_BATCH_SIZE_SMALL') ? WEBP_CP_BATCH_SIZE_SMALL : 5;
+    if ($batch_size < 1) {
+        $batch_size = 5;
+    }
+    
+    $converter = WebP_CP_Converter::get_instance();
+    $images_to_process = array_slice($all_images, $completed, $batch_size);
+    
+    $progress_data['status'] = 'processing';
+    
+    foreach ($images_to_process as $image_id) {
+        $image_id = intval($image_id);
+        if (!$image_id) {
+            $progress_data['completed']++;
+            continue;
+        }
+        
+        // Update current image name
+        $title = get_the_title($image_id);
+        $progress_data['current_image'] = $title ? $title : ('Image #' . $image_id);
+        
+        // Convert image
+        if ($converter->convert_image($image_id)) {
+            $progress_data['success']++;
+        } else {
+            $progress_data['failed']++;
+        }
+        
+        $progress_data['completed']++;
+    }
+    
+    if ($progress_data['completed'] >= $progress_data['total']) {
+        $progress_data['status'] = 'completed';
+    }
+    
+    set_transient($progress_key, $progress_data, 3600);
+    wp_send_json_success($progress_data);
+}
+
+// Convert batch with progress tracking (for background/cron execution fallback)
 add_action('webp_cp_convert_batch_progress', 'webp_cp_ajax_convert_batch_progress', 10, 2);
 function webp_cp_ajax_convert_batch_progress($image_ids, $progress_key) {
     $converter = WebP_CP_Converter::get_instance();
     $progress_data = get_transient($progress_key);
     
-    if (!$progress_data) {
+    if (!$progress_data || !is_array($progress_data)) {
         return;
     }
     
     // Check if conversion is paused or stopped
     if (isset($progress_data['status']) && ($progress_data['status'] === 'paused' || $progress_data['status'] === 'stopped')) {
-        return; // Don't process if paused or stopped
+        return;
     }
     
-    // Ensure status is set to processing
     $progress_data['status'] = 'processing';
-    set_transient($progress_key, $progress_data, 300);
+    set_transient($progress_key, $progress_data, 3600);
     
     foreach ($image_ids as $image_id) {
-        // Check status before each image (allows pause/stop during processing)
         $current_progress = get_transient($progress_key);
         if (!$current_progress) {
-            return; // Progress data lost
+            return;
         }
         
         if (isset($current_progress['status'])) {
-            if ($current_progress['status'] === 'stopped') {
-                return; // Stop processing immediately
-            }
-            if ($current_progress['status'] === 'paused') {
-                return; // Exit immediately when paused - resume will trigger new batch
+            if ($current_progress['status'] === 'stopped' || $current_progress['status'] === 'paused') {
+                return;
             }
         }
         
         $image_id = intval($image_id);
         if ($image_id) {
-            // Update current image
-            $progress_data['current_image'] = get_the_title($image_id);
-            set_transient($progress_key, $progress_data, 300);
+            $title = get_the_title($image_id);
+            $progress_data['current_image'] = $title ? $title : ('Image #' . $image_id);
+            set_transient($progress_key, $progress_data, 3600);
             
-            // Convert image
             if ($converter->convert_image($image_id)) {
                 $progress_data['success']++;
             } else {
@@ -311,14 +393,13 @@ function webp_cp_ajax_convert_batch_progress($image_ids, $progress_key) {
             }
             
             $progress_data['completed']++;
-            set_transient($progress_key, $progress_data, 300);
+            set_transient($progress_key, $progress_data, 3600);
         }
     }
     
-    // Check if all images are processed (only if not stopped)
     if ($progress_data['completed'] >= $progress_data['total'] && (!isset($progress_data['status']) || $progress_data['status'] !== 'stopped')) {
         $progress_data['status'] = 'completed';
-        set_transient($progress_key, $progress_data, 300);
+        set_transient($progress_key, $progress_data, 3600);
     }
 }
 
@@ -348,7 +429,6 @@ function webp_cp_ajax_get_conversion_progress() {
         wp_send_json_error(array('message' => 'Progress data not found.'));
     }
     
-    // Ensure status is set (default to processing if not set)
     if (!isset($progress_data['status'])) {
         $progress_data['status'] = 'processing';
     }
@@ -384,7 +464,7 @@ function webp_cp_ajax_pause_conversion() {
     
     // Set status to paused
     $progress_data['status'] = 'paused';
-    set_transient($progress_key, $progress_data, 300);
+    set_transient($progress_key, $progress_data, 3600);
     
     // Unschedule all future batch conversion events
     $cron_array = _get_cron_array();
@@ -392,7 +472,6 @@ function webp_cp_ajax_pause_conversion() {
         foreach ($cron_array as $timestamp => $cron) {
             if (isset($cron['webp_cp_convert_batch_progress'])) {
                 foreach ($cron['webp_cp_convert_batch_progress'] as $hook_key => $hook_data) {
-                    // Check if this event matches our progress key
                     if (isset($hook_data['args'][1]) && $hook_data['args'][1] === $progress_key) {
                         wp_unschedule_event($timestamp, 'webp_cp_convert_batch_progress', $hook_data['args']);
                     }
@@ -430,70 +509,15 @@ function webp_cp_ajax_resume_conversion() {
         wp_send_json_error(array('message' => 'Progress data not found.'));
     }
     
-    // Only resume if currently paused
-    if (isset($progress_data['status']) && $progress_data['status'] === 'paused') {
-        // Check if there are remaining images
-        $remaining = $progress_data['total'] - $progress_data['completed'];
-        if ($remaining > 0) {
-            // Get remaining images from stored list
-            if (!isset($progress_data['all_images']) || empty($progress_data['all_images'])) {
-                wp_send_json_error(array('message' => __('Cannot resume: image list not found.', 'soovex-webp-converter')));
-                return;
-            }
-            
-            // Calculate which images still need conversion
-            $completed_count = isset($progress_data['completed']) ? $progress_data['completed'] : 0;
-            $remaining_images = array_slice($progress_data['all_images'], $completed_count);
-            
-            if (!empty($remaining_images)) {
-                // Clear any existing scheduled events for this progress key first
-                $cron_array = _get_cron_array();
-                if ($cron_array) {
-                    foreach ($cron_array as $timestamp => $cron) {
-                        if (isset($cron['webp_cp_convert_batch_progress'])) {
-                            foreach ($cron['webp_cp_convert_batch_progress'] as $hook_key => $hook_data) {
-                                if (isset($hook_data['args'][1]) && $hook_data['args'][1] === $progress_key) {
-                                    wp_unschedule_event($timestamp, 'webp_cp_convert_batch_progress', $hook_data['args']);
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Schedule remaining batches
-                $batch_size = WEBP_CP_BATCH_SIZE_SMALL;
-                $batches = array_chunk($remaining_images, $batch_size);
-                
-                foreach ($batches as $index => $batch) {
-                    wp_schedule_single_event(time() + ($index * 2), 'webp_cp_convert_batch_progress', array($batch, $progress_key));
-                }
-                
-                // Set status back to processing
-                $progress_data['status'] = 'processing';
-                set_transient($progress_key, $progress_data, 300);
-                
-                // Trigger cron immediately to start processing
-                spawn_cron();
-                
-                wp_send_json_success(array(
-                    'message' => __('Conversion resumed. Processing will continue...', 'soovex-webp-converter'),
-                    'status' => 'processing'
-                ));
-            } else {
-                // All done
-                $progress_data['status'] = 'completed';
-                set_transient($progress_key, $progress_data, 300);
-                wp_send_json_success(array('message' => __('All images have been processed.', 'soovex-webp-converter')));
-            }
-        } else {
-            // All done
-            $progress_data['status'] = 'completed';
-            set_transient($progress_key, $progress_data, 300);
-            wp_send_json_success(array('message' => __('All images have been processed.', 'soovex-webp-converter')));
-        }
-    } else {
-        wp_send_json_error(array('message' => __('Conversion is not paused.', 'soovex-webp-converter')));
-    }
+    // Resume status
+    $progress_data['status'] = 'processing';
+    set_transient($progress_key, $progress_data, 3600);
+    
+    wp_send_json_success(array(
+        'message' => __('Conversion resumed.', 'soovex-webp-converter'),
+        'status' => 'processing',
+        'progress_key' => $progress_key
+    ));
 }
 
 // Stop conversion
@@ -524,7 +548,7 @@ function webp_cp_ajax_stop_conversion() {
     
     // Set status to stopped
     $progress_data['status'] = 'stopped';
-    set_transient($progress_key, $progress_data, 300);
+    set_transient($progress_key, $progress_data, 3600);
     
     // Unschedule all future batch conversion events
     $cron_array = _get_cron_array();
@@ -532,7 +556,6 @@ function webp_cp_ajax_stop_conversion() {
         foreach ($cron_array as $timestamp => $cron) {
             if (isset($cron['webp_cp_convert_batch_progress'])) {
                 foreach ($cron['webp_cp_convert_batch_progress'] as $hook_key => $hook_data) {
-                    // Check if this event matches our progress key
                     if (isset($hook_data['args'][1]) && $hook_data['args'][1] === $progress_key) {
                         wp_unschedule_event($timestamp, 'webp_cp_convert_batch_progress', $hook_data['args']);
                     }
@@ -700,15 +723,15 @@ function webp_cp_ajax_convert_all_with_progress() {
         wp_send_json_error(array('message' => 'You do not have permission to perform this action.'));
     }
     
-    // Get all images
+    // Get all unconverted images
     $images = webp_cp_get_all_images();
     
     if (empty($images)) {
-        wp_send_json_error(array('message' => 'No images found in media library.'));
+        wp_send_json_error(array('message' => 'No convertible images found in media library.'));
     }
     
-    // Store conversion progress
-    $progress_key = 'webp_cp_conversion_progress_' . get_current_user_id();
+    // Store conversion progress with unique key
+    $progress_key = 'webp_cp_prog_' . get_current_user_id() . '_' . time();
     $progress_data = array(
         'total' => count($images),
         'completed' => 0,
@@ -716,31 +739,12 @@ function webp_cp_ajax_convert_all_with_progress() {
         'failed' => 0,
         'current_image' => '',
         'status' => 'processing',
-        'all_images' => $images // Store all images for resume functionality
+        'all_images' => array_values($images)
     );
-    set_transient($progress_key, $progress_data, 300); // 5 minutes
-    
-    // Schedule conversion in batches
-    $batch_size = WEBP_CP_BATCH_SIZE_SMALL;
-    $batches = array_chunk($images, $batch_size);
-    
-    foreach ($batches as $index => $batch) {
-        wp_schedule_single_event(time() + ($index * 2), 'webp_cp_convert_batch_progress', array($batch, $progress_key));
-    }
-    
-    // If no cron jobs are scheduled, start immediate processing
-    if (!wp_next_scheduled('webp_cp_convert_batch_progress')) {
-        // Process first batch immediately
-        if (!empty($batches)) {
-            wp_schedule_single_event(time(), 'webp_cp_convert_batch_progress', array($batches[0], $progress_key));
-        }
-    }
-    
-    // Trigger WordPress cron to ensure scheduled events run
-    spawn_cron();
+    set_transient($progress_key, $progress_data, 3600); // 1 hour
     
     wp_send_json_success(array(
-        'message' => 'Conversion started. Processing ' . count($images) . ' images...',
+        'message' => sprintf(__('Conversion started. Processing %d images...', 'soovex-webp-converter'), count($images)),
         'progress_key' => $progress_key,
         'total' => count($images)
     ));
@@ -1208,30 +1212,12 @@ function webp_cp_ajax_reset_everything() {
     
     // 4. Delete all backup files
     $total_actions++;
-    $upload_dir = wp_upload_dir();
-    $backup_dir = $upload_dir['basedir'] . '/webp-cp-backups';
-    
-    if (is_dir($backup_dir)) {
-        $files_deleted = 0;
-        $files = glob($backup_dir . '/*');
-        
-        foreach ($files as $file) {
-            if (is_file($file)) {
-                if (unlink($file)) {
-                    $files_deleted++;
-                }
-            }
-        }
-        
-        if ($files_deleted > 0) {
-            $completed_actions++;
-            $messages[] = "$files_deleted backup file(s) deleted successfully.";
-        } else {
-            $messages[] = "No backup files found to delete.";
-        }
-    } else {
+    $backup = WebP_CP_Backup::get_instance();
+    if ($backup->delete_all_backups()) {
         $completed_actions++;
-        $messages[] = "No backup directory found.";
+        $messages[] = "All backup files and directories deleted successfully.";
+    } else {
+        $messages[] = "Failed to delete backup files.";
     }
     
     // Clear any scheduled cron jobs
