@@ -193,6 +193,15 @@ Converted images remain. Automatic serving stops. Settings are preserved.
 
 ## 🧾 Changelog
 
+### 1.0.4
+Batch Processing & Reliability Enhancements
+* Improved: Refactored the bulk conversion engine to use a robust, AJAX-driven processing loop, preventing server timeouts when converting large media libraries.
+* Fixed: Resolved file naming collisions to ensure that images with identical names but different formats (e.g., image.jpg and image.png) no longer conflict. 
+* Improved: Enhanced backup architecture by isolating original files into per-attachment directories for safer, more reliable restoration.
+* Improved: Smoother progress bar synchronization and UI modal transitions during batch conversion tasks.
+* Improved: Enhanced cleanup routines to ensure proper removal of temporary and orphaned files during plugin uninstallation.
+* Chore: Bumped version number to 1.0.4.
+
 ### 1.0.3
 - Tested up to WordPress 7.0.2
 
